@@ -1,4 +1,4 @@
-"""Завантаження та нормалізація даних. Кожна зміна фіксується в cleaning log."""
+"""Loading and normalization. Every change is recorded in the cleaning log."""
 from __future__ import annotations
 
 import re
@@ -20,7 +20,7 @@ _ID_JUNK = re.compile(r"[\s​ ]+")
 
 
 def _to_number(s: pd.Series) -> pd.Series:
-    """'1,234.50', '$12', '(5.00)' -> float. Нечислове -> NaN."""
+    """'1,234.50', '$12', '(5.00)' -> float. Non-numeric -> NaN."""
     if pd.api.types.is_numeric_dtype(s):
         return s.astype(float)
     t = s.astype(str).str.strip()
@@ -34,7 +34,7 @@ def _clean_frame(df: pd.DataFrame, name: str, required: list[str], ids: list[str
                  enums: list[str], numbers: list[str], times: list[str], log: list[dict]) -> pd.DataFrame:
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
-        raise ValueError(f"{name}: відсутні обов'язкові колонки {missing_cols}")
+        raise ValueError(f"{name}: missing required columns {missing_cols}")
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
@@ -45,7 +45,7 @@ def _clean_frame(df: pd.DataFrame, name: str, required: list[str], ids: list[str
     for c in ids:
         raw = df[c].astype("string")
         new = raw.str.replace(_ID_JUNK, "", regex=True).str.upper()
-        note(c, "trim/upper (пробіли, zero-width, регістр)", (raw != new).sum())
+        note(c, "trim/upper (whitespace, zero-width chars, case)", (raw != new).sum())
         df[c] = new
     for c in enums:
         raw = df[c].astype("string")
@@ -55,7 +55,7 @@ def _clean_frame(df: pd.DataFrame, name: str, required: list[str], ids: list[str
     for c in numbers:
         before = df[c].isna().sum()
         new = _to_number(df[c])
-        note(c, "coerce to float (поламані значення -> NaN)", new.isna().sum() - before)
+        note(c, "coerce to float (unparseable values -> NaN)", new.isna().sum() - before)
         df[c] = new
     for c in times:
         before = df[c].isna().sum()
@@ -63,7 +63,7 @@ def _clean_frame(df: pd.DataFrame, name: str, required: list[str], ids: list[str
         note(c, "parse datetime (UTC, naive)", new.isna().sum() - before)
         df[c] = new
     for c in required:
-        note(c, "NULL у обов'язковому полі", df[c].isna().sum())
+        note(c, "NULL in required field", df[c].isna().sum())
     return df
 
 
@@ -87,7 +87,7 @@ def load_and_clean(path: str, internal_sheet: str, provider_sheet: str):
         numbers=["gross_amount_usd", "provider_fee_usd", "net_amount_usd", "provider_fx_rate_to_usd"],
         times=["settled_at_utc"], log=log)
 
-    # Повні дублікати рядків (не видаляємо — позначаємо; рішення про видалення за checks)
+    # Fully duplicated rows are flagged, not dropped; the checks decide what a duplicate means
     i["row_dup_full"] = i.duplicated(keep="first")
     p["row_dup_full"] = p.duplicated(keep="first")
     log.append({"dataset": "meta", "column": "-", "action": f"internal rows={len(i)}, provider rows={len(p)}",

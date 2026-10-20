@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Запуск: python3 run_recon.py [--config config.yaml] [--input file.xlsx] [--out output]
+"""Usage: python3 run_recon.py [--config config.yaml] [--input file.xlsx] [--out output]
 
-Повністю детермінований: однаковий вхід + конфіг => однаковий вихід. Код виходу 1,
-якщо знайдено HIGH-виключення (зручно для CI/cron-перевірок).
+Fully deterministic: same input + config => same output. Exit code is 1 if any HIGH
+exception is found (handy for CI / cron checks).
 """
 import argparse
 import sys
@@ -36,7 +36,7 @@ def main(argv=None) -> int:
     print(f"internal={stats['internal_rows']} provider={stats['provider_rows']} matched={stats['matched_pairs']}")
     print(by_code.to_string(index=False))
     print("\nBridge:\n" + bridge.to_string(index=False))
-    print(f"\nВихід: {out}")
+    print(f"\nOutput: {out}")
     return 1 if (exceptions.severity == "HIGH").any() else 0
 
 

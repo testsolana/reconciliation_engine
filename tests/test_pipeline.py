@@ -1,5 +1,5 @@
-"""Регресійні тести: у чистий синтетичний набір інжектимо відомі проблеми і перевіряємо, що детектори їх ловлять,
-а нормальний шум/outlier — ні.  Запуск: python3 -m unittest discover -s tests
+"""Regression tests: known problems are injected into a clean synthetic dataset and the detectors must catch them,
+while normal noise / clean outliers must not be flagged.  Run: python3 -m unittest discover -s tests
 """
 import sys
 import unittest
@@ -34,7 +34,7 @@ def make(n=60):
                            settlement_type="PURCHASE", provider_status="SETTLED", settlement_currency="USD",
                            gross_amount_usd=gross, provider_fee_usd=fee, net_amount_usd=round(gross - fee, 2),
                            provider_fx_rate_to_usd=RATE[cur], merchant_country="DE", batch_id=st.strftime("B%Y%m%d")))
-    # хвіст, щоб дата кінця провайдера була далеко від "в польоті"
+    # anchor row so the provider data end is far from the "in flight" window
     last = rows_p[-1].copy(); last["provider_record_id"] = "P9999"; last["client_reference"] = "TX-ANCHOR"
     last["settled_at_utc"] = pd.Timestamp("2026-09-20"); last["batch_id"] = "B20260920"
     rows_p.append(last)
@@ -53,11 +53,11 @@ class PipelineTests(unittest.TestCase):
 
     def test_injected_issues_detected(self):
         i, p = make()
-        p = pd.concat([p, p[p.client_reference == "T0003"]], ignore_index=True)           # дубль settlement
-        p.loc[p.client_reference == "T0004", "gross_amount_usd"] += 25                      # сума
+        p = pd.concat([p, p[p.client_reference == "T0003"]], ignore_index=True)           # duplicate settlement
+        p.loc[p.client_reference == "T0004", "gross_amount_usd"] += 25                      # amount
         p.loc[p.client_reference == "T0005", "provider_fee_usd"] = 5.0                      # fee
         p.loc[p.client_reference == "T0006", "net_amount_usd"] -= 3                         # net
-        p.loc[p.client_reference == "T0007", "settled_at_utc"] += pd.Timedelta(hours=200)   # пізно
+        p.loc[p.client_reference == "T0007", "settled_at_utc"] += pd.Timedelta(hours=200)   # late
         p = p[p.client_reference != "T0008"]                                                # missing
         i.loc[i.transaction_id == "T0009", "status"] = "DECLINED"                           # declined settled
         i.loc[i.transaction_id == "T0010", ["transaction_type", "original_amount", "internal_gross_usd"]] = \

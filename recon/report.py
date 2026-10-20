@@ -1,4 +1,4 @@
-"""Формування вихідних артефактів: Excel, CSV, JSON, Markdown."""
+"""Builds the output artifacts: Excel, CSV and JSON."""
 from __future__ import annotations
 
 import json

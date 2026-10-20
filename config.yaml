@@ -1,4 +1,4 @@
-# Параметри reconciliation pipeline. Усі пороги — тут, а не в коді.
+# Reconciliation pipeline parameters. All thresholds live here, not in code.
 input:
   path: data/reconciliation_dataset.xlsx
   internal_sheet: internal_transactions
@@ -9,31 +9,31 @@ matching:
   key_internal: transaction_id
   key_provider: client_reference
 
-# Допуски: відхилення, спричинені нормальним FX-шумом провайдера (~±0.12%)
+# Tolerances: deviations caused by normal provider FX noise (~±0.12%)
 amount:
-  abs_tolerance_usd: 0.25      # розбіжність gross менша за max(abs, rel*|gross|) — шум
+  abs_tolerance_usd: 0.25      # gross difference below max(abs, rel*|gross|) is treated as noise
   rel_tolerance: 0.002
 fx:
-  rel_tolerance_vs_internal: 0.003   # provider vs internal rate (норма ≤0.12%)
-  band_robust_z: 6.0                 # відхилення від медіани курсу валюти (MAD-z)
-  band_min_rel: 0.005                # ...і не менше 0.5% щоб не ловити шум
+  rel_tolerance_vs_internal: 0.003   # provider vs internal rate (normal ≤0.12%)
+  band_robust_z: 6.0                 # deviation from the currency median rate (MAD-z)
+  band_min_rel: 0.005                # ...and at least 0.5%, so noise is not flagged
 fee:
-  # Провайдер використовує мінімальний fee і (щонайменше) два тарифні тири.
+  # The provider applies a minimum fee and (at least) two fee tiers.
   tiers: [0.018, 0.010]
   min_fee_usd: 0.05
-  tier_rel_tolerance: 0.08           # fee в межах ±8% від тира (з урахуванням округлення до центів)
-  rounding_usd: 0.011                # допуск на округлення
-  refund_fee_returned: true          # для refund net = gross + fee (fee повертається) — конвенція провайдера
+  tier_rel_tolerance: 0.08           # fee within ±8% of a tier (allowing for rounding to cents)
+  rounding_usd: 0.011                # rounding tolerance
+  refund_fee_returned: true          # for refunds net = gross + fee (fee is returned) - provider convention
 net:
   abs_tolerance_usd: 0.011
 timing:
-  late_settlement_hours: 96          # норма ≤ ~70h
-  in_flight_grace_hours: 96          # COMPLETED без settlement молодше цього — ще "в польоті"
+  late_settlement_hours: 96          # normal ≤ ~70h
+  in_flight_grace_hours: 96          # COMPLETED without settlement younger than this is still "in flight"
 duplicates:
-  window_minutes: 10                 # ознака можливого double-charge в internal
+  window_minutes: 10                 # possible double-charge signal inside the ledger
 outliers:
-  robust_z_threshold: 3.5            # modified z-score (MAD) на log(|USD|)
-  high_value_usd: 1000               # окремий policy-поріг: завжди на review
+  robust_z_threshold: 3.5            # modified z-score (MAD) on log(|USD|)
+  high_value_usd: 1000               # separate policy threshold: always goes to review
 
 severity:
-  high_usd: 100                      # exposure ≥ → HIGH (для критичних типів)
+  high_usd: 100                      # exposure ≥ this -> HIGH (for amount-type findings)
