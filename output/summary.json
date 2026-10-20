@@ -1,0 +1,151 @@
+{
+  "stats": {
+    "internal_rows": 320,
+    "provider_rows": 296,
+    "internal_completed": 295,
+    "internal_declined": 25,
+    "matched_pairs": 294,
+    "provider_data_end": "2026-09-13 14:23:00",
+    "provider_fees_usd": 329.06000000000006,
+    "fee_rate_low_tier_share": 0.16382252559726962,
+    "settlement_lag_h_median": 34.0,
+    "settlement_lag_h_p95": 67.0,
+    "gross_diff_noise_p95_usd": 0.0799999999999983
+  },
+  "findings_by_type": [
+    {
+      "severity": "HIGH",
+      "category": "Reconciliation",
+      "code": "SIGN_OR_TYPE_MISMATCH",
+      "count": 2,
+      "exposure_usd": 362.95,
+      "net_impact_usd": 320.13
+    },
+    {
+      "severity": "HIGH",
+      "category": "Reconciliation",
+      "code": "DUPLICATE_SETTLEMENT",
+      "count": 1,
+      "exposure_usd": 217.15,
+      "net_impact_usd": 217.15
+    },
+    {
+      "severity": "HIGH",
+      "category": "Reconciliation",
+      "code": "ORPHAN_SETTLEMENT",
+      "count": 1,
+      "exposure_usd": 146.8,
+      "net_impact_usd": 146.8
+    },
+    {
+      "severity": "HIGH",
+      "category": "Reconciliation",
+      "code": "MISSING_SETTLEMENT",
+      "count": 2,
+      "exposure_usd": 34.62,
+      "net_impact_usd": -34.62
+    },
+    {
+      "severity": "HIGH",
+      "category": "Reconciliation",
+      "code": "DECLINED_SETTLED",
+      "count": 1,
+      "exposure_usd": 19.49,
+      "net_impact_usd": 19.49
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Duplicates",
+      "code": "POSSIBLE_DUPLICATE_INTERNAL",
+      "count": 1,
+      "exposure_usd": 54.18,
+      "net_impact_usd": 54.18
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Reconciliation",
+      "code": "AMOUNT_MISMATCH",
+      "count": 1,
+      "exposure_usd": 12.5,
+      "net_impact_usd": 12.5
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "FX",
+      "code": "FX_MISMATCH",
+      "count": 2,
+      "exposure_usd": 4.13,
+      "net_impact_usd": 1.43
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Fee",
+      "code": "NET_MISMATCH",
+      "count": 1,
+      "exposure_usd": 3.33,
+      "net_impact_usd": 3.33
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Fee",
+      "code": "FEE_ANOMALY",
+      "count": 2,
+      "exposure_usd": 2.49,
+      "net_impact_usd": 2.35
+    },
+    {
+      "severity": "LOW",
+      "category": "Timing",
+      "code": "LATE_SETTLEMENT",
+      "count": 1,
+      "exposure_usd": 0.0,
+      "net_impact_usd": 0.0
+    },
+    {
+      "severity": "INFO",
+      "category": "Outlier",
+      "code": "HIGH_VALUE_OUTLIER",
+      "count": 1,
+      "exposure_usd": 0.0,
+      "net_impact_usd": 0.0
+    }
+  ],
+  "bridge": [
+    {
+      "step": "Internal gross (COMPLETED)",
+      "usd": 17208.18
+    },
+    {
+      "step": "− Missing settlements",
+      "usd": -34.62
+    },
+    {
+      "step": "+ Orphan settlements",
+      "usd": 146.8
+    },
+    {
+      "step": "+ Duplicate settlements",
+      "usd": 217.15
+    },
+    {
+      "step": "+ DECLINED settled",
+      "usd": 19.49
+    },
+    {
+      "step": "± Sign/type mismatch",
+      "usd": 320.13
+    },
+    {
+      "step": "± Amount/FX mismatch",
+      "usd": 13.93
+    },
+    {
+      "step": "± Нормальний FX-шум (решта)",
+      "usd": -4.23
+    },
+    {
+      "step": "= Provider gross (всі рядки)",
+      "usd": 17886.83
+    }
+  ]
+}
