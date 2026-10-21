@@ -29,6 +29,8 @@ CATALOG = {
     "PROVIDER_CALC_ERROR": ("Data quality", "MEDIUM", "Provider gross != original_amount x provider_fx."),
     "BATCH_DATE_MISMATCH": ("Data quality", "LOW", "batch_id does not match the settlement date."),
     "DUPLICATE_KEY": ("Data quality", "HIGH", "Duplicated key (transaction_id / provider_record_id)."),
+    "NULL_KEY": ("Data quality", "HIGH", "Empty key: the row cannot be matched to the other system; it is reported as unmatched instead of being dropped."),
+    "INVALID_VALUE": ("Data quality", "MEDIUM", "Null, zero or non-positive value in a field the checks depend on: the row cannot be compared reliably."),
     "HIGH_VALUE_OUTLIER": ("Outlier", "INFO", "Statistical outlier that reconciles cleanly: legitimate, but needs a business review."),
     "OUTLIER_WITH_DEFECT": ("Outlier", "HIGH", "Outlier that also has a reconciliation defect: investigate first."),
     "IN_FLIGHT": ("Reconciliation", "INFO", "COMPLETED without settlement but still inside the normal settlement window."),
@@ -68,6 +70,72 @@ def robust_z(x: pd.Series) -> pd.Series:
     return 0.6745 * (x - med) / mad
 
 
+def safe_div(a, b, eps: float = 1e-12):
+    """a / b that returns NaN (never inf / ZeroDivisionError) when b is zero, null or ~0.
+    Works for scalars and pandas Series; NaN is then handled explicitly by the callers."""
+    if np.isscalar(b) or b is None:
+        return float("nan") if (b is None or pd.isna(b) or abs(b) < eps) else a / b
+    b = pd.Series(b)
+    return a / b.where(b.abs() >= eps)
+
+
+def _guard_inputs(i: pd.DataFrame, p: pd.DataFrame, F, ki: str, kp: str):
+    """Make bad rows visible instead of letting them vanish silently.
+
+    1. Empty keys get a unique placeholder (`__NULL_<side><row>`): they can never be merged with each
+       other (pandas merges NaN == NaN) and never fall out of a groupby (which drops NaN groups).
+       Each one is reported as NULL_KEY and then flows through matching as an unmatched/orphan row.
+    2. Null / zero / non-positive values in fields the checks rely on are reported as INVALID_VALUE,
+       because a NaN comparison is always False and the row would otherwise pass every check unnoticed.
+    """
+    i, p = i.copy(), p.copy()
+    n_keys = 0
+    for df, col, tag, who in ((i, ki, "I", "internal"), (p, kp, "P", "provider"),
+                              (p, "provider_record_id", "R", "provider")):
+        blank = (df[col].astype("string").str.strip() == "").fillna(False)
+        for idx in df.index[df[col].isna() | blank]:
+            ph = f"__NULL_{tag}{idx}"
+            if who == "internal":
+                txn, prov = ph, None
+            elif col == kp:
+                txn, prov = ph, df.at[idx, "provider_record_id"]
+            else:
+                txn, prov = df.at[idx, kp], ph
+            F.add("NULL_KEY", txn=txn, prov=prov,
+                  detail=f"{who} data row {idx + 1}: {col} is empty; placeholder {ph} is used so the row is "
+                         f"reported as unmatched instead of being merged or dropped")
+            df.loc[idx, col] = ph
+            n_keys += 1
+
+    spec = (
+        (i, "internal", ["user_id", "transaction_type", "status", "original_currency", "merchant_id", "created_at_utc",
+                         "original_amount", "internal_fx_rate_to_usd", "internal_gross_usd"],
+         ["internal_fx_rate_to_usd"], ["internal_gross_usd"]),
+        (p, "provider", ["settlement_type", "settled_at_utc", "batch_id", "gross_amount_usd", "provider_fee_usd",
+                         "net_amount_usd", "provider_fx_rate_to_usd"],
+         ["provider_fx_rate_to_usd"], ["gross_amount_usd"]),
+    )
+    n_bad = 0
+    for df, who, required, positive, nonzero in spec:
+        probs: dict = {}
+        for c in required:
+            for idx in df.index[df[c].isna()]:
+                probs.setdefault(idx, []).append(f"{c} is null")
+        for c in positive:
+            for idx in df.index[df[c].notna() & (df[c] <= 0)]:
+                probs.setdefault(idx, []).append(f"{c} = {df.at[idx, c]} (must be > 0)")
+        for c in nonzero:
+            for idx in df.index[df[c].notna() & (df[c] == 0)]:
+                probs.setdefault(idx, []).append(f"{c} is zero")
+        for idx in sorted(probs):
+            F.add("INVALID_VALUE",
+                  txn=df.at[idx, ki if who == "internal" else kp],
+                  prov=df.at[idx, "provider_record_id"] if who == "provider" else None,
+                  detail=f"{who} data row {idx + 1}: " + "; ".join(probs[idx]))
+            n_bad += 1
+    return i, p, {"rows_with_null_keys": n_keys, "rows_with_invalid_values": n_bad}
+
+
 def _fee_fits(fee, gross, cfg) -> bool:
     g = abs(gross)
     for t in cfg["tiers"]:
@@ -94,8 +162,14 @@ def build_match(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
 def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     F = Findings()
     i, p = i.reset_index(drop=True), p.reset_index(drop=True)  # the code below relies on a unique index
-    m, extras, orphans, p_sorted = build_match(i, p, cfg)
     ki, kp = cfg["matching"]["key_internal"], cfg["matching"]["key_provider"]
+    i, p, guard_stats = _guard_inputs(i, p, F, ki, kp)
+    m, extras, orphans, p_sorted = build_match(i, p, cfg)
+    # Row accounting: nothing may be lost or multiplied by matching
+    n_primary = int((p_sorted._occ == 0).sum())
+    if len(m) != len(i) or n_primary + len(extras) != len(p):
+        raise RuntimeError(f"row accounting failed: internal {len(i)} -> merged {len(m)}; "
+                           f"provider {len(p)} -> primary {n_primary} + duplicates {len(extras)}")
     A, FX, FEE, T, O = cfg["amount"], cfg["fx"], cfg["fee"], cfg["timing"], cfg["outliers"]
 
     # ---------- Data quality: internal ledger ----------
@@ -118,7 +192,7 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
 
     # FX band for internal rates (per currency, relative deviation from the median)
     med_rate = i.groupby("original_currency").internal_fx_rate_to_usd.median()
-    i_dev = i.internal_fx_rate_to_usd / i.original_currency.map(med_rate) - 1
+    i_dev = safe_div(i.internal_fx_rate_to_usd, i.original_currency.map(med_rate)) - 1
     for r in i[(i_dev.abs() > FX["band_min_rel"])].itertuples():
         F.add("FX_INTERNAL_OUT_OF_BAND", txn=r.transaction_id,
               detail=f"{r.original_currency} rate {r.internal_fx_rate_to_usd} vs median {med_rate[r.original_currency]:.4f} ({i_dev[r.Index]:+.2%})")
@@ -158,10 +232,10 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     # ---------- Reconciliation: amount comparison for matched COMPLETED pairs ----------
     mm = m[m.matched & (m.status == "COMPLETED")].copy()
     mm["gross_diff"] = mm.gross_amount_usd - mm.internal_gross_usd
-    mm["fx_rel_diff"] = mm.provider_fx_rate_to_usd / mm.internal_fx_rate_to_usd - 1
+    mm["fx_rel_diff"] = safe_div(mm.provider_fx_rate_to_usd, mm.internal_fx_rate_to_usd) - 1
     mm["tol"] = np.maximum(A["abs_tolerance_usd"], A["rel_tolerance"] * mm.internal_gross_usd.abs())
     mm["implied_gross"] = (mm.original_amount * mm.provider_fx_rate_to_usd).round(2)
-    prov_dev = mm.provider_fx_rate_to_usd / mm.original_currency.map(med_rate) - 1
+    prov_dev = safe_div(mm.provider_fx_rate_to_usd, mm.original_currency.map(med_rate)) - 1
     mm["lag_h"] = (mm.settled_at_utc - mm.created_at_utc).dt.total_seconds() / 3600
 
     flagged_fx = set()
@@ -176,8 +250,11 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
                          f"internal {i_dev[r.Index]:+.2%} -> provider is the deviating side")
 
     for r in mm.itertuples():
-        sign_flip = np.sign(r.gross_amount_usd) != np.sign(r.internal_gross_usd)
-        type_diff = r.settlement_type != r.transaction_type
+        if pd.isna(r.gross_amount_usd) or pd.isna(r.internal_gross_usd):
+            continue  # reported as INVALID_VALUE; a NaN comparison would otherwise pass silently or fake a mismatch
+        sign_flip = np.sign(r.gross_amount_usd) * np.sign(r.internal_gross_usd) < 0  # zero is not a sign flip
+        type_diff = bool(pd.notna(r.settlement_type) and pd.notna(r.transaction_type)
+                         and r.settlement_type != r.transaction_type)
         if sign_flip or type_diff:
             F.add("SIGN_OR_TYPE_MISMATCH", txn=r.transaction_id, prov=r.provider_record_id,
                   impact=r.gross_amount_usd - r.internal_gross_usd,
@@ -220,7 +297,7 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
             nearest = min((max(FEE["min_fee_usd"], round(t * g, 2)) for t in FEE["tiers"]),
                           key=lambda e: abs(e - r.provider_fee_usd))
             F.add("FEE_ANOMALY", txn=r.transaction_id, prov=r.provider_record_id, impact=r.provider_fee_usd - nearest,
-                  detail=f"fee {r.provider_fee_usd} = {r.provider_fee_usd / g:.2%} of {g}; expected ≈{nearest} "
+                  detail=f"fee {r.provider_fee_usd} = {safe_div(r.provider_fee_usd, g):.2%} of {g}; expected ≈{nearest} "
                          f"(tiers {[f'{t:.1%}' for t in FEE['tiers']]}, min {FEE['min_fee_usd']})")
 
         if r.lag_h < 0:
@@ -233,6 +310,8 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     # ---------- Possible duplicates inside the ledger (double charge) ----------
     comp = i[i.status == "COMPLETED"].sort_values("created_at_utc")
     grp = ["user_id", "original_currency", "original_amount", "merchant_id"]
+    # groupby drops rows with a null key; count them (each is already reported as INVALID_VALUE)
+    skipped_dup = int(comp[grp].isna().any(axis=1).sum())
     for _, g in comp.groupby(grp):
         if len(g) < 2:
             continue
@@ -253,7 +332,7 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     base = i[i.status == "COMPLETED"].copy()
     base["abs_usd"] = base.internal_gross_usd.abs()
     base["z"] = np.nan
-    for t, g in base.groupby("transaction_type"):
+    for t, g in base.groupby(base.transaction_type.fillna("UNKNOWN")):
         g = g[g.abs_usd > 0]
         base.loc[g.index, "z"] = robust_z(np.log(g.abs_usd))
     cand = base[(base.z.abs() > O["robust_z_threshold"]) | (base.abs_usd >= O["high_value_usd"])]
@@ -286,15 +365,19 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     struct = flagged_ids(["SIGN_OR_TYPE_MISMATCH"])
     amt = flagged_ids(["AMOUNT_MISMATCH", "FX_MISMATCH"]) - struct
     d = pairs.gross_diff
+    nan_rows = d.isna()  # pairs where an amount is null: cannot be compared, shown as their own bridge step
+    invalid_val = float((pairs.gross_amount_usd.fillna(0) - pairs.internal_gross_usd.fillna(0))[nan_rows].sum())
     bridge = [
         ("Internal gross (COMPLETED)", float(i[i.status == "COMPLETED"].internal_gross_usd.sum())),
         ("− Missing settlements", float(-unsettled[unsettled.transaction_id.isin(flagged_ids(["MISSING_SETTLEMENT"]))].internal_gross_usd.sum())),
+        ("− In flight (not yet due)", float(-unsettled[~unsettled.transaction_id.isin(flagged_ids(["MISSING_SETTLEMENT"]))].internal_gross_usd.sum()) + 0.0),
         ("+ Orphan settlements", float(orphans.gross_amount_usd.sum())),
         ("+ Duplicate settlements", float(extras.gross_amount_usd.sum())),
         ("+ DECLINED settled", float(dec.gross_amount_usd.sum())),
         ("± Sign/type mismatch", float(d[pairs.transaction_id.isin(struct)].sum())),
         ("± Amount/FX mismatch", float(d[pairs.transaction_id.isin(amt)].sum())),
-        ("± Normal FX noise (remainder)", float(d[~pairs.transaction_id.isin(struct | amt)].sum())),
+        ("± Rows with null amounts (not comparable)", invalid_val),
+        ("± Normal FX noise (remainder)", float(d[~pairs.transaction_id.isin(struct | amt) & ~nan_rows].sum())),
     ]
     prov_total = float(p.gross_amount_usd.sum())
     bridge.append(("= Provider gross (all rows)", prov_total))
@@ -306,8 +389,9 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
         "internal_completed": int((i.status == "COMPLETED").sum()), "internal_declined": int((i.status == "DECLINED").sum()),
         "matched_pairs": int(m.matched.sum()), "provider_data_end": str(data_end),
         "provider_fees_usd": float(p.provider_fee_usd.sum()),
-        "fee_rate_low_tier_share": float(((mm.provider_fee_usd / mm.gross_amount_usd.abs() < 0.0125) & (mm.gross_amount_usd.abs() > 3)).mean()),
+        "fee_rate_low_tier_share": float(((safe_div(mm.provider_fee_usd, mm.gross_amount_usd.abs()) < 0.0125) & (mm.gross_amount_usd.abs() > 3)).mean()),
         "settlement_lag_h_median": float(mm.lag_h.median()), "settlement_lag_h_p95": float(mm.lag_h.quantile(.95)),
         "gross_diff_noise_p95_usd": float(mm.gross_diff.abs().quantile(.95)),
+        **guard_stats, "rows_skipped_in_duplicate_check": skipped_dup,
     }
     return exceptions, pd.DataFrame(outl), bridge_df, m, mm, stats

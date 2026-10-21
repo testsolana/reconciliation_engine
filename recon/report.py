@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
+
+from .checks import safe_div
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -44,8 +46,8 @@ def write_outputs(out: Path, exceptions, outliers, bridge, m, mm, clean_log, sta
 
     matched = m[m.matched].copy()
     matched["gross_diff_usd"] = (matched.gross_amount_usd - matched.internal_gross_usd).round(2)
-    matched["fx_rel_diff_pct"] = ((matched.provider_fx_rate_to_usd / matched.internal_fx_rate_to_usd - 1) * 100).round(3)
-    matched["fee_rate_pct"] = (matched.provider_fee_usd / matched.gross_amount_usd.abs() * 100).round(3)
+    matched["fx_rel_diff_pct"] = ((safe_div(matched.provider_fx_rate_to_usd, matched.internal_fx_rate_to_usd) - 1) * 100).round(3)
+    matched["fee_rate_pct"] = (safe_div(matched.provider_fee_usd, matched.gross_amount_usd.abs()) * 100).round(3)
     matched["settlement_lag_h"] = ((matched.settled_at_utc - matched.created_at_utc).dt.total_seconds() / 3600).round(1)
     flagged = set(exceptions[exceptions.severity.isin(["HIGH", "MEDIUM", "LOW"])].transaction_id.dropna())
     matched["flagged"] = matched.transaction_id.isin(flagged)

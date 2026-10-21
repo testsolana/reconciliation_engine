@@ -121,5 +121,67 @@ class PipelineTests(unittest.TestCase):
         pd.testing.assert_frame_equal(a, b)
 
 
+    # ---- robustness: zero / null values and null keys must be reported, never silent or crashing ----
+    def test_safe_div(self):
+        import numpy as np
+        from recon.checks import safe_div
+        self.assertTrue(np.isnan(safe_div(1.0, 0.0)))
+        self.assertTrue(np.isnan(safe_div(1.0, float("nan"))))
+        self.assertAlmostEqual(safe_div(1.0, 4.0), 0.25)
+        out = safe_div(pd.Series([1.0, 2.0]), pd.Series([0.0, 4.0]))
+        self.assertTrue(np.isnan(out.iloc[0]))
+        self.assertEqual(out.iloc[1], 0.5)
+
+    def test_zero_and_null_values_are_reported_not_silent(self):
+        i, p = make()
+        i.loc[i.transaction_id == "T0004", "internal_fx_rate_to_usd"] = 0.0     # zero rate -> would be inf
+        p.loc[p.client_reference == "T0012", "gross_amount_usd"] = float("nan")  # NaN comparisons are always False
+        p.loc[p.client_reference == "T0013", "gross_amount_usd"] = 0.0           # zero gross
+        exc, _, bridge, *_ = run_checks(i, p, CFG)
+        for t in ("T0004", "T0012", "T0013"):
+            self.assertIn("INVALID_VALUE", codes(exc, t))
+        self.assertNotIn("SIGN_OR_TYPE_MISMATCH", codes(exc, "T0012"))          # no fake mismatch from NaN
+        self.assertNotIn("SIGN_OR_TYPE_MISMATCH", codes(exc, "T0013"))          # zero is not a sign flip
+        self.assertAlmostEqual(bridge.usd.iloc[:-1].sum(), bridge.usd.iloc[-1], places=2)
+
+    def test_null_keys_are_reported_not_dropped(self):
+        i, p = make()
+        p.loc[p.client_reference == "T0006", "client_reference"] = float("nan")
+        i.loc[i.transaction_id == "T0010", "transaction_id"] = float("nan")
+        exc, _, bridge, m, _, stats = run_checks(i, p, CFG)
+        self.assertEqual(int((exc.code == "NULL_KEY").sum()), 2)
+        self.assertEqual(stats["rows_with_null_keys"], 2)
+        self.assertIn("MISSING_SETTLEMENT", codes(exc, "T0006"))                 # ledger side lost its partner
+        self.assertEqual(len(m), len(i))                                         # no row lost or multiplied
+        self.assertAlmostEqual(bridge.usd.iloc[:-1].sum(), bridge.usd.iloc[-1], places=2)
+        # the two null keys must not be merged with each other
+        self.assertFalse(m[m.transaction_id.str.startswith("__NULL_I")].matched.any())
+
+    def test_null_group_keys_are_counted(self):
+        i, p = make()
+        i.loc[i.transaction_id.isin(["T0007", "T0008"]), "user_id"] = float("nan")
+        exc, _, _, _, _, stats = run_checks(i, p, CFG)
+        self.assertEqual(stats["rows_skipped_in_duplicate_check"], 2)
+        self.assertEqual(int((exc.code == "INVALID_VALUE").sum()), 2)
+
+    def test_null_transaction_type_does_not_crash_or_fake_mismatch(self):
+        i, p = make()
+        i.loc[i.transaction_id == "T0009", "transaction_type"] = float("nan")
+        exc = run_checks(i, p, CFG)[0]
+        self.assertIn("INVALID_VALUE", codes(exc, "T0009"))
+        self.assertNotIn("SIGN_OR_TYPE_MISMATCH", codes(exc, "T0009"))
+
+
+    def test_in_flight_transaction_keeps_bridge_balanced(self):
+        i, p = make()
+        created = i.loc[i.transaction_id == "T0059", "created_at_utc"].iloc[0]
+        p = p[p.client_reference != "T0059"].copy()
+        p.loc[p.provider_record_id == "P9999", "settled_at_utc"] = created + pd.Timedelta(hours=10)
+        exc, _, bridge, *_ = run_checks(i, p, CFG)
+        self.assertIn("IN_FLIGHT", codes(exc, "T0059"))
+        self.assertNotIn("MISSING_SETTLEMENT", codes(exc, "T0059"))
+        self.assertAlmostEqual(bridge.usd.iloc[:-1].sum(), bridge.usd.iloc[-1], places=2)
+
+
 if __name__ == "__main__":
     unittest.main()
