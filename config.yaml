@@ -31,6 +31,9 @@ timing:
   in_flight_grace_hours: 96          # COMPLETED without settlement younger than this is still "in flight"
 duplicates:
   window_minutes: 10                 # possible double-charge signal inside the ledger
+  # Severity by confidence that the pair is a real duplicate (same channel + category = high,
+  # one of them = medium, neither = low). High confidence needs both rows settled, otherwise MEDIUM.
+  confidence_severity: {high: HIGH, medium: MEDIUM, low: LOW}
 outliers:
   robust_z_threshold: 3.5            # modified z-score (MAD) on log(|USD|)
   high_value_usd: 1000               # separate policy threshold: always goes to review

@@ -10,7 +10,10 @@
     "fee_rate_low_tier_share": 0.16382252559726962,
     "settlement_lag_h_median": 34.0,
     "settlement_lag_h_p95": 67.0,
-    "gross_diff_noise_p95_usd": 0.0799999999999983
+    "gross_diff_noise_p95_usd": 0.0799999999999983,
+    "rows_with_null_keys": 0,
+    "rows_with_invalid_values": 0,
+    "rows_skipped_in_duplicate_check": 0
   },
   "findings_by_type": [
     {
@@ -55,14 +58,6 @@
     },
     {
       "severity": "MEDIUM",
-      "category": "Duplicates",
-      "code": "POSSIBLE_DUPLICATE_INTERNAL",
-      "count": 1,
-      "exposure_usd": 54.18,
-      "net_impact_usd": 54.18
-    },
-    {
-      "severity": "MEDIUM",
       "category": "Reconciliation",
       "code": "AMOUNT_MISMATCH",
       "count": 1,
@@ -95,6 +90,14 @@
     },
     {
       "severity": "LOW",
+      "category": "Duplicates",
+      "code": "POSSIBLE_DUPLICATE_INTERNAL",
+      "count": 1,
+      "exposure_usd": 54.18,
+      "net_impact_usd": 54.18
+    },
+    {
+      "severity": "LOW",
       "category": "Timing",
       "code": "LATE_SETTLEMENT",
       "count": 1,
@@ -120,6 +123,10 @@
       "usd": -34.62
     },
     {
+      "step": "− In flight (not yet due)",
+      "usd": 0.0
+    },
+    {
       "step": "+ Orphan settlements",
       "usd": 146.8
     },
@@ -140,11 +147,15 @@
       "usd": 13.93
     },
     {
-      "step": "± Нормальний FX-шум (решта)",
+      "step": "± Rows with null amounts (not comparable)",
+      "usd": 0.0
+    },
+    {
+      "step": "± Normal FX noise (remainder)",
       "usd": -4.23
     },
     {
-      "step": "= Provider gross (всі рядки)",
+      "step": "= Provider gross (all rows)",
       "usd": 17886.83
     }
   ]

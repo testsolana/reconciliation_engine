@@ -183,5 +183,41 @@ class PipelineTests(unittest.TestCase):
         self.assertAlmostEqual(bridge.usd.iloc[:-1].sum(), bridge.usd.iloc[-1], places=2)
 
 
+    # ---- duplicate confidence: same channel+category = strong signal, differing attributes = weak ----
+    def _dup_case(self, channel_differs=False, category_differs=False, settle_second=True):
+        i, p = make()
+        src = i[i.transaction_id == "T0011"].iloc[0]
+        dup = i[i.transaction_id == "T0011"].assign(transaction_id="T0011B",
+                                                    created_at_utc=src.created_at_utc + pd.Timedelta(minutes=2))
+        if channel_differs:
+            dup["channel"] = "POS"
+        if category_differs:
+            dup["merchant_category"] = "7011"
+        i = pd.concat([i, dup], ignore_index=True)
+        if settle_second:
+            prow = p[p.client_reference == "T0011"].assign(client_reference="T0011B", provider_record_id="P0011B")
+            p = pd.concat([p, prow], ignore_index=True)
+        exc = run_checks(i, p, CFG)[0]
+        return exc[(exc.code == "POSSIBLE_DUPLICATE_INTERNAL") & (exc.transaction_id == "T0011B")].iloc[0]
+
+    def test_duplicate_identical_attributes_and_settled_is_high(self):
+        row = self._dup_case()
+        self.assertEqual(row.severity, "HIGH")
+        self.assertIn("confidence HIGH", row.detail)
+
+    def test_duplicate_identical_but_not_settled_is_medium(self):
+        self.assertEqual(self._dup_case(settle_second=False).severity, "MEDIUM")
+
+    def test_duplicate_with_one_differing_attribute_is_medium(self):
+        row = self._dup_case(channel_differs=True)
+        self.assertEqual(row.severity, "MEDIUM")
+        self.assertIn("channel differ", row.detail)
+
+    def test_duplicate_with_channel_and_category_differing_is_low(self):
+        row = self._dup_case(channel_differs=True, category_differs=True)
+        self.assertEqual(row.severity, "LOW")
+        self.assertIn("confidence LOW", row.detail)
+
+
 if __name__ == "__main__":
     unittest.main()

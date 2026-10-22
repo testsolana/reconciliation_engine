@@ -312,6 +312,7 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
     grp = ["user_id", "original_currency", "original_amount", "merchant_id"]
     # groupby drops rows with a null key; count them (each is already reported as INVALID_VALUE)
     skipped_dup = int(comp[grp].isna().any(axis=1).sum())
+    prov_keys = set(p[kp])
     for _, g in comp.groupby(grp):
         if len(g) < 2:
             continue
@@ -320,9 +321,23 @@ def run_checks(i: pd.DataFrame, p: pd.DataFrame, cfg: dict):
             gap = (t[a] - t[a - 1]) / np.timedelta64(1, "m")
             if gap <= cfg["duplicates"]["window_minutes"]:
                 r0, r1 = g.iloc[a - 1], g.iloc[a]
-                both = all(x in set(p[kp]) for x in (r0.transaction_id, r1.transaction_id))
+                both = r0.transaction_id in prov_keys and r1.transaction_id in prov_keys
+                # Confidence that this is a real duplicate: a technical double-submit repeats every attribute,
+                # two genuine purchases usually differ in channel and/or merchant category.
+                same = {"channel": r0.channel == r1.channel,
+                        "category": r0.merchant_category == r1.merchant_category}
+                n_same = sum(same.values())
+                conf = {2: "high", 1: "medium", 0: "low"}[n_same]
+                sev_map = {"high": "HIGH", "medium": "MEDIUM", "low": "LOW",
+                           **cfg["duplicates"].get("confidence_severity", {})}
+                sev = sev_map[conf]
+                if conf == "high" and not both:
+                    sev = "MEDIUM"  # no money moved yet for at least one of the two: less urgent
+                differs = [k for k, v in same.items() if not v]
                 F.add("POSSIBLE_DUPLICATE_INTERNAL", txn=r1.transaction_id, impact=r1.internal_gross_usd,
-                      detail=f"{r0.transaction_id} and {r1.transaction_id}: user {r1.user_id}, merchant {r1.merchant_id}, "
+                      severity=sev,
+                      detail=f"confidence {conf.upper()} ({'identical channel and category' if not differs else ', '.join(differs) + ' differ'}): "
+                             f"{r0.transaction_id} and {r1.transaction_id}: user {r1.user_id}, merchant {r1.merchant_id}, "
                              f"{r1.original_amount} {r1.original_currency}, gap {gap:.0f} min; "
                              f"category {r0.merchant_category}/{r1.merchant_category}, channel {r0.channel}/{r1.channel}; "
                              f"both settled by provider: {'yes' if both else 'no'}")
