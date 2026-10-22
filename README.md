@@ -2,7 +2,7 @@
 
 Reconciles an internal transaction ledger (`internal_transactions`, 320 rows) against a provider settlement report (`provider_settlement`, 296 rows) and reports duplicates, missing operations, and amount / fee / FX discrepancies.
 
-## start
+## Start
 
 **Requirements:** Python 3.10 or newer recommended (tested on 3.13). On Windows use `python` instead of `python3`.
 
@@ -78,9 +78,6 @@ Bridge: internal COMPLETED 17,208.18 -> provider 17,886.83. The +678.65 differen
 ## Duplicate confidence
 A pair of near-identical ledger operations is only a *signal*. Confidence is scored from the attributes a technical double-submit would repeat: same channel and same merchant category = **high** (severity HIGH if both rows were settled, otherwise MEDIUM); one of them = **medium** (MEDIUM); neither = **low** (LOW). The mapping is configurable in `config.yaml` (`duplicates.confidence_severity`). T202609-0061/0062 differ in both, so it is LOW.
 
-## Real problem vs. normal outlier
-Rule: statistical rarity (modified z-score on log|USD|, computed separately for purchases and refunds, threshold 3.5, plus a $1,000 policy threshold) is **not an error by itself**. An outlier becomes `HIGH_VALUE_OUTLIER` (INFO, business review only) if amounts, FX, fee, net and timing agree in both sources, and `OUTLIER_WITH_DEFECT` (HIGH) if it has at least one reconciliation defect. Likewise: a high fee % on tiny tickets follows from the $0.05 minimum, not an anomaly; a $4.27 gross difference on $8,900 (0.05%) is noise, while $2.78 on $40 (7%) is a real FX failure. The measure is relative and tied to the pricing model, not an absolute amount.
-
 ## Robustness to dirty data
 - **No silent skips.** Null/zero/non-positive values in fields the checks rely on are reported as `INVALID_VALUE`; empty keys are reported as `NULL_KEY`. (A NaN comparison is always False, so such rows would otherwise pass every check.)
 - **No lost rows.** Empty keys get a unique placeholder (`__NULL_I<row>` / `__NULL_P<row>`), so they are never merged with each other and never dropped by a `groupby`; they surface as missing settlements or orphans. A row-accounting check raises a descriptive error if matching ever loses or multiplies a row.
@@ -88,5 +85,4 @@ Rule: statistical rarity (modified z-score on log|USD|, computed separately for 
 - **Bridge stays balanced** with in-flight transactions and rows that have null amounts (own bridge steps).
 - Rows skipped by the duplicate check because of a null grouping field are counted in `rows_skipped_in_duplicate_check`.
 
-## Limitations
-The dataset is synthetic and small (~300 rows): thresholds are tuned to its distribution (FX noise ±0.12%, fee tiers) and must be recalibrated in `config.yaml` for production data. Fee tiers are inferred from the data, not from a contract.
+
