@@ -81,15 +81,6 @@ A pair of near-identical ledger operations is only a *signal*. Confidence is sco
 ## Real problem vs. normal outlier
 Rule: statistical rarity (modified z-score on log|USD|, computed separately for purchases and refunds, threshold 3.5, plus a $1,000 policy threshold) is **not an error by itself**. An outlier becomes `HIGH_VALUE_OUTLIER` (INFO, business review only) if amounts, FX, fee, net and timing agree in both sources, and `OUTLIER_WITH_DEFECT` (HIGH) if it has at least one reconciliation defect. Likewise: a high fee % on tiny tickets follows from the $0.05 minimum, not an anomaly; a $4.27 gross difference on $8,900 (0.05%) is noise, while $2.78 on $40 (7%) is a real FX failure. The measure is relative and tied to the pricing model, not an absolute amount.
 
-## Further anomalies worth checking (not implemented / need more data)
-- Refunds with no linked original purchase: the ledger has no `original_transaction_id`, and none of the 19 refunds has a purchase by the same user + merchant. Add the field and check refund <= original.
-- Velocity / structuring: many operations per user or card in a short time, amounts just under limits, card_country != merchant_country combined with a large amount.
-- Batch/day aggregation: provider batch totals vs. the sum of its rows and vs. the bank payout statement.
-- Fee drift (average % by day/merchant), fee-tier changes; new currencies and rates; stale FX over weekends.
-- `merchant_id` appears in 3-8 countries - either the merchant master data is wrong or country does not belong to the merchant.
-- Settlements on weekends/outside the window, batch overlap, `provider_record_id` reuse, late-arriving records in later reports (cross-period de-duplication).
-- In-flight effect: on an incomplete period, recent unsettled transactions are not counted as missing (`in_flight_grace_hours`).
-
 ## Robustness to dirty data
 - **No silent skips.** Null/zero/non-positive values in fields the checks rely on are reported as `INVALID_VALUE`; empty keys are reported as `NULL_KEY`. (A NaN comparison is always False, so such rows would otherwise pass every check.)
 - **No lost rows.** Empty keys get a unique placeholder (`__NULL_I<row>` / `__NULL_P<row>`), so they are never merged with each other and never dropped by a `groupby`; they surface as missing settlements or orphans. A row-accounting check raises a descriptive error if matching ever loses or multiplies a row.
